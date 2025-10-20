@@ -10,6 +10,8 @@ export class TunnelMultiplexer {
     this.agents = new Map();
     // Map of requestId -> {resolve, reject, timeout} for pending requests
     this.pendingRequests = new Map();
+    // Map of requestId -> {chunks, totalChunks, headers, status} for chunked responses
+    this.chunkedResponses = new Map();
     this.requestIdCounter = 0;
   }
 
@@ -36,17 +38,13 @@ export class TunnelMultiplexer {
    * Handle agent WebSocket connection
    */
   async handleAgentConnect(request) {
-    // Check for authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response('Unauthorized', { status: 401 });
-    }
-
-    const token = authHeader.substring(7);
-    
-    // Extract agent ID from URL or generate from token
+    // Extract agent ID from URL
     const url = new URL(request.url);
-    const agentId = url.searchParams.get('agent_id') || token;
+    const agentId = url.searchParams.get('agent_id');
+    
+    if (!agentId) {
+      return new Response('Missing agent_id parameter', { status: 400 });
+    }
 
     // Upgrade to WebSocket
     const pair = new WebSocketPair();
@@ -58,7 +56,6 @@ export class TunnelMultiplexer {
     // Store the agent connection
     this.agents.set(agentId, {
       socket: server,
-      token: token,
       connectedAt: Date.now()
     });
 
@@ -95,7 +92,7 @@ export class TunnelMultiplexer {
    * Handle messages from agent (responses to proxied requests)
    */
   async handleAgentMessage(agentId, message) {
-    const { requestId, type, status, headers, body, error } = message;
+    const { requestId, type, status, headers, body, error, isChunked, chunkIndex, totalChunks } = message;
 
     if (!requestId) {
       console.error('Received message without requestId from', agentId);
@@ -108,16 +105,53 @@ export class TunnelMultiplexer {
       return;
     }
 
-    // Clear timeout
-    clearTimeout(pending.timeout);
-    this.pendingRequests.delete(requestId);
-
     if (error) {
+      clearTimeout(pending.timeout);
+      this.pendingRequests.delete(requestId);
+      this.chunkedResponses.delete(requestId);
       pending.reject(new Error(error));
       return;
     }
 
-    // Resolve with response data
+    // Handle chunked responses
+    if (isChunked) {
+      let chunkedData = this.chunkedResponses.get(requestId);
+      if (!chunkedData) {
+        chunkedData = {
+          chunks: new Array(totalChunks),
+          totalChunks,
+          status,
+          headers: headers || {}
+        };
+        this.chunkedResponses.set(requestId, chunkedData);
+      }
+
+      chunkedData.chunks[chunkIndex] = body;
+
+      // Check if we have all chunks
+      const receivedChunks = chunkedData.chunks.filter(c => c !== undefined).length;
+      if (receivedChunks === totalChunks) {
+        // All chunks received, reassemble
+        const fullBody = chunkedData.chunks.join('');
+        
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(requestId);
+        this.chunkedResponses.delete(requestId);
+
+        pending.resolve({
+          status: chunkedData.status,
+          headers: chunkedData.headers,
+          body: fullBody
+        });
+      }
+      // Otherwise wait for more chunks
+      return;
+    }
+
+    // Handle single-message response
+    clearTimeout(pending.timeout);
+    this.pendingRequests.delete(requestId);
+
     pending.resolve({
       status: status || 200,
       headers: headers || {},

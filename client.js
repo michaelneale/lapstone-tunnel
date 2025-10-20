@@ -12,20 +12,21 @@ const http = require('http');
 const config = {
   workerUrl: process.env.WORKER_URL || process.argv[2],
   agentId: process.env.AGENT_ID || process.argv[3],
-  token: process.env.TOKEN || process.argv[4],
-  target: process.env.TARGET || process.argv[5] || 'http://127.0.0.1:8000'
+  target: process.env.TARGET || process.argv[4] || 'http://127.0.0.1:8000'
 };
 
-if (!config.workerUrl || !config.agentId || !config.token) {
-  console.log('Usage: node client.js <worker-url> <agent-id> <token> [target]');
-  console.log('   OR: WORKER_URL=... AGENT_ID=... TOKEN=... node client.js');
+if (!config.workerUrl || !config.agentId) {
+  console.log('Usage: node client.js <worker-url> <agent-id> [target]');
+  console.log('   OR: WORKER_URL=... AGENT_ID=... node client.js');
   console.log('\nExample:');
-  console.log('  node client.js https://my-worker.workers.dev my-laptop secret-token http://127.0.0.1:8000');
+  console.log('  node client.js https://my-worker.workers.dev my-laptop-a1b2c3d4 http://127.0.0.1:8000');
+  console.log('\nSecurity: Use a long random agent-id. Anyone who knows it can access your tunnel!');
   process.exit(1);
 }
 
 let ws;
 let reconnectTimeout;
+let pingInterval;
 
 function connect() {
   const wsUrl = config.workerUrl
@@ -36,15 +37,19 @@ function connect() {
   
   console.log(`Connecting to ${url}...`);
   
-  ws = new WebSocket(url, {
-    headers: {
-      'Authorization': `Bearer ${config.token}`
-    }
-  });
+  ws = new WebSocket(url);
 
   ws.on('open', () => {
     console.log(`✓ Connected as agent: ${config.agentId}`);
     console.log(`✓ Proxying to: ${config.target}`);
+    
+    // Send keepalive ping every 20 seconds to prevent DO hibernation
+    clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      }
+    }, 20000);
   });
 
   ws.on('message', async (data) => {
@@ -53,8 +58,10 @@ function connect() {
   });
 
   ws.on('close', () => {
-    console.log('✗ Connection closed, reconnecting in 5s...');
-    reconnectTimeout = setTimeout(connect, 5000);
+    console.log('✗ Connection closed, reconnecting immediately...');
+    clearInterval(pingInterval);
+    // Reconnect immediately, not after 5 seconds
+    reconnectTimeout = setTimeout(connect, 100);
   });
 
   ws.on('error', (err) => {
@@ -86,15 +93,43 @@ async function handleRequest(message) {
       const responseBody = Buffer.concat(chunks).toString();
       const responseHeaders = res.headers;
       
-      const response = {
-        requestId,
-        status: res.statusCode,
-        headers: responseHeaders,
-        body: responseBody
-      };
+      // Check if response is too large for single WebSocket message (1MB limit)
+      const MAX_WS_SIZE = 900000; // 900KB to be safe
       
-      ws.send(JSON.stringify(response));
-      console.log(`← ${res.statusCode} ${path} [${requestId}]`);
+      if (responseBody.length > MAX_WS_SIZE) {
+        // Send in chunks
+        const totalChunks = Math.ceil(responseBody.length / MAX_WS_SIZE);
+        console.log(`← ${res.statusCode} ${path} [${requestId}] (${responseBody.length} bytes, ${totalChunks} chunks)`);
+        
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * MAX_WS_SIZE;
+          const end = Math.min(start + MAX_WS_SIZE, responseBody.length);
+          const chunk = responseBody.substring(start, end);
+          
+          const response = {
+            requestId,
+            status: res.statusCode,
+            headers: i === 0 ? responseHeaders : undefined, // Only send headers in first chunk
+            body: chunk,
+            chunkIndex: i,
+            totalChunks: totalChunks,
+            isChunked: true
+          };
+          
+          ws.send(JSON.stringify(response));
+        }
+      } else {
+        // Send as single message
+        const response = {
+          requestId,
+          status: res.statusCode,
+          headers: responseHeaders,
+          body: responseBody
+        };
+        
+        ws.send(JSON.stringify(response));
+        console.log(`← ${res.statusCode} ${path} [${requestId}]`);
+      }
     });
   });
 
