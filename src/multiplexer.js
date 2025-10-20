@@ -8,9 +8,9 @@ export class TunnelMultiplexer {
     this.env = env;
     // Map of agentId -> WebSocket connection
     this.agents = new Map();
-    // Map of requestId -> {resolve, reject, timeout} for pending requests
+    // Map of requestId -> {streamController, resolve, reject, timeout} for pending requests
     this.pendingRequests = new Map();
-    // Map of requestId -> {chunks, totalChunks, headers, status} for chunked responses
+    // Map of requestId -> {chunks, totalChunks, headers, status} for chunked large responses
     this.chunkedResponses = new Map();
     this.requestIdCounter = 0;
   }
@@ -92,7 +92,9 @@ export class TunnelMultiplexer {
    * Handle messages from agent (responses to proxied requests)
    */
   async handleAgentMessage(agentId, message) {
-    const { requestId, type, status, headers, body, error, isChunked, chunkIndex, totalChunks } = message;
+    const { requestId, type, status, headers, body, error, 
+            isStreaming, isFirstChunk, isLastChunk,
+            isChunked, chunkIndex, totalChunks } = message;
 
     if (!requestId) {
       console.error('Received message without requestId from', agentId);
@@ -113,7 +115,28 @@ export class TunnelMultiplexer {
       return;
     }
 
-    // Handle chunked responses
+    // Handle real-time streaming responses (SSE, etc.)
+    if (isStreaming) {
+      if (isFirstChunk) {
+        // First chunk - send data (headers are already set in response)
+        if (body) {
+          pending.streamController.enqueue(new TextEncoder().encode(body));
+        }
+      } else if (isLastChunk) {
+        // Last chunk - close the stream
+        pending.streamController.close();
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(requestId);
+      } else {
+        // Middle chunk - send data
+        if (body) {
+          pending.streamController.enqueue(new TextEncoder().encode(body));
+        }
+      }
+      return;
+    }
+
+    // Handle chunked large responses (e.g., /sessions with huge data)
     if (isChunked) {
       let chunkedData = this.chunkedResponses.get(requestId);
       if (!chunkedData) {
@@ -148,7 +171,7 @@ export class TunnelMultiplexer {
       return;
     }
 
-    // Handle single-message response
+    // Handle single-message response (small, non-streaming)
     clearTimeout(pending.timeout);
     this.pendingRequests.delete(requestId);
 
@@ -194,43 +217,82 @@ export class TunnelMultiplexer {
       body = await request.text();
     }
 
-    // Create promise for response
-    const responsePromise = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error('Request timeout'));
-      }, 30000); // 30 second timeout
+    // Create a streaming response using ReadableStream
+    let streamController;
+    let responseHeaders;
+    let responseStatus;
+    let responseType; // Track if streaming or buffered
 
-      this.pendingRequests.set(requestId, { resolve, reject, timeout });
+    const stream = new ReadableStream({
+      start: (controller) => {
+        streamController = controller;
+
+        // Set up timeout and store pending request info
+        const timeout = setTimeout(() => {
+          this.pendingRequests.delete(requestId);
+          controller.error(new Error('Request timeout'));
+        }, 120000); // 120 second timeout for streaming responses
+
+        this.pendingRequests.set(requestId, {
+          streamController: controller,
+          timeout,
+          resolve: (response) => {
+            // For non-streaming responses (buffered)
+            responseStatus = response.status;
+            responseHeaders = response.headers;
+            responseType = 'buffered';
+            controller.enqueue(new TextEncoder().encode(response.body));
+            controller.close();
+            clearTimeout(timeout);
+          },
+          reject: (error) => {
+            controller.error(error);
+            clearTimeout(timeout);
+          }
+        });
+
+        // Send request to agent
+        const message = {
+          requestId,
+          type: 'proxy_request',
+          method,
+          path,
+          headers,
+          body
+        };
+
+        try {
+          agent.socket.send(JSON.stringify(message));
+        } catch (error) {
+          this.pendingRequests.delete(requestId);
+          controller.error(new Error('Failed to send request to agent'));
+        }
+      }
     });
 
-    // Send request to agent
-    const message = {
-      requestId,
-      type: 'proxy_request',
-      method,
-      path,
-      headers,
-      body
-    };
+    // Wait a moment to receive first chunk and determine response type
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    try {
-      agent.socket.send(JSON.stringify(message));
-    } catch (error) {
-      this.pendingRequests.delete(requestId);
-      return new Response('Failed to send request to agent', { status: 500 });
-    }
-
-    // Wait for response
-    try {
-      const response = await responsePromise;
-      return new Response(response.body, {
-        status: response.status,
-        headers: response.headers
+    // Check if we got a complete buffered response
+    const pending = this.pendingRequests.get(requestId);
+    if (!pending) {
+      // Response already complete - use actual headers
+      return new Response(stream, {
+        status: responseStatus || 200,
+        headers: responseHeaders || {}
       });
-    } catch (error) {
-      return new Response(error.message, { status: 504 });
     }
+
+    // Response still pending - assume streaming and return appropriate headers
+    // The actual response headers from the backend will be in the first chunk
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
+    });
   }
 
   /**

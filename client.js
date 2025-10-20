@@ -85,52 +85,98 @@ async function handleRequest(message) {
   };
 
   const req = http.request(options, (res) => {
-    const chunks = [];
+    const responseHeaders = res.headers;
     
-    res.on('data', chunk => chunks.push(chunk));
+    // Check if this is a streaming response (SSE, etc.)
+    const isStreamingResponse = responseHeaders['content-type']?.includes('text/event-stream');
     
-    res.on('end', () => {
-      const responseBody = Buffer.concat(chunks).toString();
-      const responseHeaders = res.headers;
+    if (isStreamingResponse) {
+      // Real-time streaming: send each chunk as it arrives
+      console.log(`← ${res.statusCode} ${path} [${requestId}] (streaming)`);
+      let isFirstChunk = true;
+      let chunkIndex = 0;
       
-      // Check if response is too large for single WebSocket message (1MB limit)
-      const MAX_WS_SIZE = 900000; // 900KB to be safe
-      
-      if (responseBody.length > MAX_WS_SIZE) {
-        // Send in chunks
-        const totalChunks = Math.ceil(responseBody.length / MAX_WS_SIZE);
-        console.log(`← ${res.statusCode} ${path} [${requestId}] (${responseBody.length} bytes, ${totalChunks} chunks)`);
+      res.on('data', chunk => {
+        const chunkStr = chunk.toString();
         
-        for (let i = 0; i < totalChunks; i++) {
-          const start = i * MAX_WS_SIZE;
-          const end = Math.min(start + MAX_WS_SIZE, responseBody.length);
-          const chunk = responseBody.substring(start, end);
-          
-          const response = {
-            requestId,
-            status: res.statusCode,
-            headers: i === 0 ? responseHeaders : undefined, // Only send headers in first chunk
-            body: chunk,
-            chunkIndex: i,
-            totalChunks: totalChunks,
-            isChunked: true
-          };
-          
-          ws.send(JSON.stringify(response));
-        }
-      } else {
-        // Send as single message
         const response = {
           requestId,
           status: res.statusCode,
-          headers: responseHeaders,
-          body: responseBody
+          headers: isFirstChunk ? responseHeaders : undefined,
+          body: chunkStr,
+          chunkIndex: chunkIndex++,
+          isStreaming: true,
+          isFirstChunk: isFirstChunk,
+          isLastChunk: false
+        };
+        
+        isFirstChunk = false;
+        ws.send(JSON.stringify(response));
+      });
+      
+      res.on('end', () => {
+        // Send final chunk marker
+        const response = {
+          requestId,
+          status: res.statusCode,
+          body: '',
+          chunkIndex: chunkIndex,
+          isStreaming: true,
+          isFirstChunk: false,
+          isLastChunk: true
         };
         
         ws.send(JSON.stringify(response));
-        console.log(`← ${res.statusCode} ${path} [${requestId}]`);
-      }
-    });
+        console.log(`← ${res.statusCode} ${path} [${requestId}] (complete, ${chunkIndex} chunks)`);
+      });
+    } else {
+      // Regular response: buffer and potentially split if too large
+      const chunks = [];
+      
+      res.on('data', chunk => chunks.push(chunk));
+      
+      res.on('end', () => {
+        const responseBody = Buffer.concat(chunks).toString();
+        
+        // Check if response is too large for single WebSocket message (1MB limit)
+        const MAX_WS_SIZE = 900000; // 900KB to be safe
+        
+        if (responseBody.length > MAX_WS_SIZE) {
+          // Send in chunks
+          const totalChunks = Math.ceil(responseBody.length / MAX_WS_SIZE);
+          console.log(`← ${res.statusCode} ${path} [${requestId}] (${responseBody.length} bytes, ${totalChunks} chunks)`);
+          
+          for (let i = 0; i < totalChunks; i++) {
+            const start = i * MAX_WS_SIZE;
+            const end = Math.min(start + MAX_WS_SIZE, responseBody.length);
+            const chunk = responseBody.substring(start, end);
+            
+            const response = {
+              requestId,
+              status: res.statusCode,
+              headers: i === 0 ? responseHeaders : undefined, // Only send headers in first chunk
+              body: chunk,
+              chunkIndex: i,
+              totalChunks: totalChunks,
+              isChunked: true
+            };
+            
+            ws.send(JSON.stringify(response));
+          }
+        } else {
+          // Send as single message
+          const response = {
+            requestId,
+            status: res.statusCode,
+            headers: responseHeaders,
+            body: responseBody
+          };
+          
+          ws.send(JSON.stringify(response));
+          console.log(`← ${res.statusCode} ${path} [${requestId}]`);
+        }
+      });
+    }
   });
 
   req.on('error', (err) => {
