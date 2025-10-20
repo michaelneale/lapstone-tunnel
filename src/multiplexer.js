@@ -120,7 +120,7 @@ export class TunnelMultiplexer {
       if (isFirstChunk) {
         // First chunk - send data (headers are already set in response)
         if (body) {
-          pending.streamController.enqueue(new TextEncoder().encode(body));
+          pending.streamController.write(new TextEncoder().encode(body));
         }
       } else if (isLastChunk) {
         // Last chunk - close the stream
@@ -130,7 +130,7 @@ export class TunnelMultiplexer {
       } else {
         // Middle chunk - send data
         if (body) {
-          pending.streamController.enqueue(new TextEncoder().encode(body));
+          pending.streamController.write(new TextEncoder().encode(body));
         }
       }
       return;
@@ -218,79 +218,74 @@ export class TunnelMultiplexer {
     }
 
     // Create a streaming response using ReadableStream
-    let streamController;
-    let responseHeaders;
-    let responseStatus;
-    let responseType; // Track if streaming or buffered
+    let responseHeaders = null;
+    let responseStatus = 200;
+    
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
 
-    const stream = new ReadableStream({
-      start: (controller) => {
-        streamController = controller;
+    // Set up timeout and store pending request info
+    const timeout = setTimeout(() => {
+      this.pendingRequests.delete(requestId);
+      writer.abort(new Error('Request timeout'));
+    }, 120000); // 120 second timeout for streaming responses
 
-        // Set up timeout and store pending request info
-        const timeout = setTimeout(() => {
-          this.pendingRequests.delete(requestId);
-          controller.error(new Error('Request timeout'));
-        }, 120000); // 120 second timeout for streaming responses
-
-        this.pendingRequests.set(requestId, {
-          streamController: controller,
-          timeout,
-          resolve: (response) => {
-            // For non-streaming responses (buffered)
-            responseStatus = response.status;
-            responseHeaders = response.headers;
-            responseType = 'buffered';
-            controller.enqueue(new TextEncoder().encode(response.body));
-            controller.close();
-            clearTimeout(timeout);
-          },
-          reject: (error) => {
-            controller.error(error);
-            clearTimeout(timeout);
-          }
-        });
-
-        // Send request to agent
-        const message = {
-          requestId,
-          type: 'proxy_request',
-          method,
-          path,
-          headers,
-          body
-        };
-
-        try {
-          agent.socket.send(JSON.stringify(message));
-        } catch (error) {
-          this.pendingRequests.delete(requestId);
-          controller.error(new Error('Failed to send request to agent'));
-        }
+    this.pendingRequests.set(requestId, {
+      streamController: writer,
+      timeout,
+      resolve: (response) => {
+        // For non-streaming responses (buffered)
+        responseStatus = response.status;
+        responseHeaders = response.headers;
+        writer.write(new TextEncoder().encode(response.body));
+        writer.close();
+        clearTimeout(timeout);
+        this.pendingRequests.delete(requestId);
+      },
+      reject: (error) => {
+        writer.abort(error);
+        clearTimeout(timeout);
+        this.pendingRequests.delete(requestId);
       }
     });
 
-    // Wait a moment to receive first chunk and determine response type
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Send request to agent
+    const message = {
+      requestId,
+      type: 'proxy_request',
+      method,
+      path,
+      headers,
+      body
+    };
 
-    // Check if we got a complete buffered response
+    try {
+      agent.socket.send(JSON.stringify(message));
+    } catch (error) {
+      this.pendingRequests.delete(requestId);
+      return new Response('Failed to send request to agent', { status: 500 });
+    }
+
+    // Wait briefly for first message to get real status/headers
+    // This is a tradeoff: ~20ms latency for correct status codes
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Check if response came back quickly
     const pending = this.pendingRequests.get(requestId);
     if (!pending) {
-      // Response already complete - use actual headers
-      return new Response(stream, {
-        status: responseStatus || 200,
+      // Response complete - return with actual headers
+      return new Response(readable, {
+        status: responseStatus,
         headers: responseHeaders || {}
       });
     }
 
-    // Response still pending - assume streaming and return appropriate headers
-    // The actual response headers from the backend will be in the first chunk
-    return new Response(stream, {
+    // Still pending - return with generic headers, data will stream through
+    return new Response(readable, {
       status: 200,
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Content-Type': 'application/octet-stream',
+        'Cache-Control': 'no-cache'
       }
     });
   }
