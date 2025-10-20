@@ -1,0 +1,23 @@
+{
+  "name": "cloudflare-tunnel-proxy",
+  "version": "1.0.0",
+  "description": "Lightweight localhost proxy using Cloudflare Workers and Durable Objects",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "cloudflare",
+    "worker",
+    "durable-objects",
+    "proxy",
+    "tunnel"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

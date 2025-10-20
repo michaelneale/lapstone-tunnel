@@ -1,0 +1,14 @@
+name = "cloudflare-tunnel-proxy"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Durable Object binding
+[[durable_objects.bindings]]
+name = "TUNNEL_MULTIPLEXER"
+class_name = "TunnelMultiplexer"
+script_name = "cloudflare-tunnel-proxy"
+
+# Durable Object namespace (using new_sqlite_classes for free tier)
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TunnelMultiplexer"]
