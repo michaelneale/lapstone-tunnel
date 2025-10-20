@@ -39,17 +39,6 @@ https://cloudflare-tunnel-proxy.michael-neale.workers.dev/tunnel/my-laptop-a1b2c
 
 Done.
 
-## Security
-
-⚠️ **There is NO security at the tunnel layer.**
-
-- Anyone who guesses your agent-id can access your service
-- Use a long random ID: `laptop-$(openssl rand -hex 8)`
-- Add your own auth to your service (API keys, passwords, etc.)
-- This is just dumb pipes - like port forwarding
-
-**Think ngrok/localtunnel but even simpler.**
-
 ## How it works
 
 ```
@@ -88,27 +77,38 @@ node client.js https://worker.dev my-id http://localhost:3000
 Don't want to use the public service? Deploy your own:
 
 ```bash
+# First time setup
 wrangler login
-wrangler deploy
+
+# Deploy the worker
+npx wrangler deploy
 ```
 
-Now use your own URL instead.
+You'll get output like:
+```
+Deployed cloudflare-tunnel-proxy triggers
+  https://your-worker-name.your-account.workers.dev
+```
+
+Now use your own URL instead of the public service.
+
+## Features
+
+- ✅ **Simple HTTP proxying** - Just works like port forwarding
+- ✅ **SSE streaming** - Real-time streaming endpoints (like AI chat) work natively
+- ✅ **Large response handling** - Automatically chunks responses >900KB
+- ✅ **Auto-reconnect** - Client reconnects immediately if disconnected
+- ✅ **Durable Objects** - Each agent gets persistent connection
 
 ## Files
 
-- `client.js` - Node.js client (~120 lines)
+- `client.js` - Node.js client (~160 lines)
 - `src/index.js` - Worker entry point (~110 lines)
-- `src/multiplexer.js` - Durable Object (~200 lines)
+- `src/multiplexer.js` - Durable Object (~280 lines)
 
-Total: ~430 lines of code.
+Total: ~550 lines of code.
 
 ## FAQ
-
-**Q: Is this secure?**  
-A: No. Anyone who knows your agent-id can access your tunnel. Add auth to your service.
-
-**Q: Can I use this in production?**  
-A: No. This is for development/demos. Deploy your own Worker if you need more control.
 
 **Q: How much does it cost?**  
 A: Free tier covers typical personal use (100k requests/day).

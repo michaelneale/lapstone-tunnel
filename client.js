@@ -43,6 +43,10 @@ function connect() {
     console.log(`✓ Connected as agent: ${config.agentId}`);
     console.log(`✓ Proxying to: ${config.target}`);
     
+    // Build and display the public URL (without trailing slash)
+    const publicUrl = config.workerUrl.replace(/\/$/, '') + `/tunnel/${config.agentId}`;
+    console.log(`✓ Public URL: ${publicUrl}`);
+    
     // Send keepalive ping every 20 seconds to prevent DO hibernation
     clearInterval(pingInterval);
     pingInterval = setInterval(() => {
