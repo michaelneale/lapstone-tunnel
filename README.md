@@ -9,6 +9,12 @@ A public tunnel service running at:
 https://cloudflare-tunnel-proxy.michael-neale.workers.dev
 ```
 
+**⚠️ Public Service = Best Efforts**
+- This is a shared service, no guarantees
+- May hit rate limits with heavy use
+- Could go away anytime
+- **For serious use: Deploy your own (see below)**
+
 Anyone can use it. No signup. No tokens. Just pick a random ID and connect.
 
 ## Usage
@@ -74,7 +80,13 @@ node client.js https://worker.dev my-id http://localhost:3000
 
 ## Deploy your own
 
-Don't want to use the public service? Deploy your own:
+**Why deploy your own?**
+- 🔒 Keep it private to your team/organization
+- 📈 Scale without hitting shared service limits
+- 💰 Control your own costs
+- ⚡ Guaranteed availability
+
+**How:**
 
 ```bash
 # First time setup
@@ -90,7 +102,7 @@ Deployed cloudflare-tunnel-proxy triggers
   https://your-worker-name.your-account.workers.dev
 ```
 
-Now use your own URL instead of the public service.
+Now use your own URL instead of the public service. Takes ~30 seconds to deploy!
 
 ## Features
 
@@ -108,16 +120,31 @@ Now use your own URL instead of the public service.
 
 Total: ~550 lines of code.
 
+## Scalability
+
+Each agent gets its own Durable Object instance, so:
+
+- **Many agents** = Many DOs = Scales horizontally ✅
+- **One agent** = One DO = ~1000 requests/second limit per agent
+- **Busy agent** won't affect other agents (isolated)
+- Free tier: 100k requests/day across all agents
+
+Great for: Personal use, dev tools, demos, small teams
+Not great for: High-traffic production apps (single agent bottleneck)
+
 ## FAQ
 
 **Q: How much does it cost?**  
-A: Free tier covers typical personal use (100k requests/day).
+A: Free tier: 100k requests/day. Paid plan: $5/month for 10M requests. Same performance either way.
 
 **Q: What if my agent-id collides with someone else's?**  
 A: First one wins. That's why you use a random ID.
 
 **Q: Can multiple clients use the same agent-id?**  
 A: No. Last one to connect wins.
+
+**Q: How many agents can I run?**  
+A: As many as you want - each gets its own DO instance.
 
 ## License
 
