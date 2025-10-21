@@ -81,6 +81,8 @@ node client.js <worker-url> <agent-id> [target]
 - `agent-id`: Your unique ID (make it random!)
 - `target`: Local service (default: `http://127.0.0.1:8000`)
 
+Consider `client.js` as a reference implementation for a client (you can do similar in any language, TODO: need to share my typescript port which has health checking and reconnection built in). 
+
 **Examples:**
 ```bash
 # Basic
