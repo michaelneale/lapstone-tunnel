@@ -47,14 +47,20 @@ Done.
 
 ## How it works
 
-```
-Internet → Cloudflare Worker → Durable Object → WebSocket → Your Client → localhost
+```mermaid
+graph LR
+    A[Internet] --> B[Cloudflare Worker]
+    B --> C[Durable Object]
+    C <-->|WebSocket| D[Your Client]
+    D --> E[localhost:8000]
 ```
 
 1. Client opens WebSocket to Worker with agent-id
 2. Worker creates a Durable Object for that agent-id
 3. HTTP requests to `/tunnel/{agent-id}/path` go through the WebSocket
 4. Client proxies to localhost and returns response
+
+**📖 For detailed architecture diagrams, see [ARCHITECTURE.md](./ARCHITECTURE.md)**
 
 ## Client API
 

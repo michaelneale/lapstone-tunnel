@@ -1,4 +1,142 @@
-# Architecture: Response Handling
+# Architecture
+
+## System Overview
+
+```mermaid
+graph TB
+    subgraph Internet
+        HTTP[HTTP Client<br/>Browser/App/curl]
+    end
+    
+    subgraph Cloudflare Workers
+        Worker[Worker Entry Point<br/>index.js]
+        
+        subgraph "Durable Object (one per agent)"
+            DO[TunnelMultiplexer<br/>- agents Map<br/>- pendingRequests Map<br/>- chunkedResponses Map]
+        end
+    end
+    
+    subgraph "Behind NAT/Firewall"
+        Client[Client Agent<br/>client.js]
+        LocalApp[Local Application<br/>localhost:8000]
+    end
+    
+    HTTP -->|"GET /tunnel/agent-123/api/data"| Worker
+    Worker -->|"Route to DO for agent-123"| DO
+    DO <-->|"Persistent WebSocket<br/>(bidirectional)"| Client
+    Client -->|"HTTP to localhost"| LocalApp
+    LocalApp -->|"Response"| Client
+    Client -->|"Stream back via WS"| DO
+    DO -->|"HTTP Response"| HTTP
+    
+    style DO fill:#ff9900
+    style Client fill:#00aa00
+    style Worker fill:#0099ff
+```
+
+## Connection Flow
+
+### 1. Client Connection (Persistent Tunnel)
+
+```mermaid
+sequenceDiagram
+    participant Client as Client Agent<br/>(behind NAT)
+    participant Worker as Worker<br/>index.js
+    participant DO as Durable Object<br/>TunnelMultiplexer
+    
+    Note over Client: Client initiates<br/>outbound connection
+    Client->>Worker: WebSocket to /connect?agent_id=agent-123
+    Worker->>DO: Route to DO instance<br/>idFromName("agent-123")
+    DO->>DO: Create WebSocket pair
+    DO->>DO: Store in agents Map
+    DO-->>Client: WebSocket 101 Upgrade
+    
+    Note over Client,DO: Persistent connection established
+    
+    loop Every 20 seconds
+        Client->>DO: ping (keepalive)
+    end
+```
+
+### 2. HTTP Request Flow
+
+```mermaid
+sequenceDiagram
+    participant HTTP as HTTP Client
+    participant Worker as Worker<br/>index.js
+    participant DO as Durable Object<br/>TunnelMultiplexer
+    participant Client as Client Agent
+    participant Local as localhost:8000
+    
+    HTTP->>Worker: GET /tunnel/agent-123/api/data
+    Worker->>DO: /proxy?agent_id=agent-123&path=/api/data
+    
+    DO->>DO: Generate requestId<br/>req_1_1234567890
+    DO->>DO: Create ReadableStream<br/>Store in pendingRequests
+    DO->>Client: WebSocket message<br/>{requestId, method, path, headers, body}
+    
+    Client->>Local: HTTP GET /api/data
+    
+    alt Small Response (<900KB)
+        Local-->>Client: Response (complete)
+        Client->>DO: {requestId, status, headers, body}
+        DO->>DO: Write to stream & close
+        DO-->>HTTP: HTTP Response
+    else Large Response (>900KB)
+        Local-->>Client: Response (complete, 2MB)
+        Client->>DO: Chunk 0/3 {isChunked, chunkIndex: 0}
+        Client->>DO: Chunk 1/3 {isChunked, chunkIndex: 1}
+        Client->>DO: Chunk 2/3 {isChunked, chunkIndex: 2}
+        DO->>DO: Reassemble all chunks
+        DO->>DO: Write full body & close
+        DO-->>HTTP: HTTP Response
+    else Streaming Response (SSE)
+        Local-->>Client: Stream chunk 1
+        Client->>DO: {isStreaming, isFirstChunk: true}
+        DO->>HTTP: Start streaming
+        Local-->>Client: Stream chunk 2...N
+        Client->>DO: {isStreaming, isFirstChunk: false}
+        DO->>HTTP: Continue streaming
+        Local-->>Client: Stream complete
+        Client->>DO: {isStreaming, isLastChunk: true}
+        DO->>HTTP: Close stream
+    end
+```
+
+## Component Responsibilities
+
+```mermaid
+graph LR
+    subgraph "Worker (index.js)"
+        A[Stateless Router]
+        A --> B[/connect endpoint]
+        A --> C[/tunnel endpoint]
+        A --> D[/health endpoint]
+    end
+    
+    subgraph "Durable Object (multiplexer.js)"
+        E[Stateful Multiplexer]
+        E --> F[Accept WebSocket<br/>from clients]
+        E --> G[Store agent<br/>connections]
+        E --> H[Route HTTP requests<br/>to agents]
+        E --> I[Handle streaming<br/>responses]
+        E --> J[Reassemble chunked<br/>responses]
+    end
+    
+    subgraph "Client (client.js)"
+        K[NAT Traversal Agent]
+        K --> L[Maintain persistent<br/>WebSocket]
+        K --> M[Forward requests<br/>to localhost]
+        K --> N[Detect response type<br/>Content-Type]
+        K --> O[Stream/chunk<br/>responses]
+    end
+    
+    B -.Route.-> F
+    C -.Route.-> H
+    H -.WebSocket.-> K
+```
+
+# Response Handling Architecture
 
 ## How It Tells Them Apart
 
