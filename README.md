@@ -1,19 +1,28 @@
-# Cloudflare Tunnel Proxy
+# Local Tunnel Proxy
 
-**Expose localhost through Cloudflare's edge. Super simple. No auth.**
+**Expose localhost through using cloudflare durable objects and edge workers. Super simple. No auth.**
+
+<img src="https://github.com/user-attachments/assets/bc32c226-7208-445c-aa93-dc379c9729f0" alt="lit brick tunnel" width="200"/>
 
 ## What is this?
 
-A public tunnel service running at:
+A public https tunnel service running at:
 ```
 https://cloudflare-tunnel-proxy.michael-neale.workers.dev
 ```
+Supports https, sse and more. 
+
+## Why? 
+
+I couldn't find something that could be distributed with random apps that could self service to make tunnels without a signup process or installation/VPN like tools. Also wanted something that could scale and be low cost making use of already scaled platform. Needed predictable re-usable named tunnels which work with https and sse and so on.
+
+Alternatives: tailscale, cloudflared (short term), ngrok... (will flesh this out). Plenty of good ones that may work for you. 
 
 **⚠️ Public Service = Best Efforts**
 - This is a shared service, no guarantees
 - May hit rate limits with heavy use
 - Could go away anytime
-- **For serious use: Deploy your own (see below)**
+- **For serious use: Deploy your own (see below, it is free and easy)**
 
 Anyone can use it. No signup. No tokens. Just pick a random ID and connect.
 
