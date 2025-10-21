@@ -14,9 +14,9 @@ Supports https, sse and more.
 
 ## Why? 
 
-I couldn't find something that could be distributed with random apps that could self service to make tunnels without a signup process or installation/VPN like tools. Also wanted something that could scale and be low cost making use of already scaled platform. Needed predictable re-usable named tunnels which work with https and sse and so on.
+I couldn't find something that could be distributed with random apps that could self service to make tunnels without a signup process or installation/VPN like tools. Also wanted something that could scale and be low cost making use of already scaled platform. Needed predictable re-usable named tunnels which work with https and sse and so on. Also needed to be fast and low latency.
 
-Alternatives: tailscale, cloudflared (short term), ngrok... (will flesh this out). Plenty of good ones that may work for you. 
+Alternatives: tailscale (nice as very secure, and can do p2p optimally), cloudflared (short term), ngrok... (will flesh this out). Plenty of good ones that may work for you. 
 
 **⚠️ Public Service = Best Efforts**
 - This is a shared service, no guarantees
@@ -81,7 +81,7 @@ node client.js <worker-url> <agent-id> [target]
 - `agent-id`: Your unique ID (make it random!)
 - `target`: Local service (default: `http://127.0.0.1:8000`)
 
-Consider `client.js` as a reference implementation for a client (you can do similar in any language, TODO: need to share my typescript port which has health checking and reconnection built in). 
+Consider `client.js` as a reference implementation for a client (you can do similar in any language, TODO: need to share my typescript port which has health checking and reconnection built in). It should be fairly simple to clean-room implement this ideally in any environment or language. It is shuttling traffic over a websocket basically.
 
 **Examples:**
 ```bash
