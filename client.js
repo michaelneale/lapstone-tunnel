@@ -26,7 +26,6 @@ if (!config.workerUrl || !config.agentId) {
 
 let ws;
 let reconnectTimeout;
-let pingInterval;
 
 function connect() {
   const wsUrl = config.workerUrl
@@ -46,14 +45,6 @@ function connect() {
     // Build and display the public URL (without trailing slash)
     const publicUrl = config.workerUrl.replace(/\/$/, '') + `/tunnel/${config.agentId}`;
     console.log(`✓ Public URL: ${publicUrl}`);
-    
-    // Send keepalive ping every 20 seconds to prevent DO hibernation
-    clearInterval(pingInterval);
-    pingInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.ping();
-      }
-    }, 20000);
   });
 
   ws.on('message', async (data) => {
@@ -63,7 +54,6 @@ function connect() {
 
   ws.on('close', () => {
     console.log('✗ Connection closed, reconnecting immediately...');
-    clearInterval(pingInterval);
     // Reconnect immediately, not after 5 seconds
     reconnectTimeout = setTimeout(connect, 100);
   });
