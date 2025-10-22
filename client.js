@@ -26,7 +26,8 @@ if (!config.workerUrl || !config.agentId) {
 
 let ws;
 let reconnectTimeout;
-let pingInterval;
+let lastActivityTime = Date.now();
+let idleCheckInterval;
 
 function connect() {
   const wsUrl = config.workerUrl
@@ -47,24 +48,33 @@ function connect() {
     const publicUrl = config.workerUrl.replace(/\/$/, '') + `/tunnel/${config.agentId}`;
     console.log(`✓ Public URL: ${publicUrl}`);
     
-    // Send keepalive ping every 20 seconds to prevent DO hibernation
-    clearInterval(pingInterval);
-    pingInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.ping();
+    // Enable TCP keepalive to detect dead connections faster
+    const socket = ws._socket;
+    socket.setKeepAlive(true, 30000); // Send keepalive probe every 30s of idle
+    
+    // Update activity timestamp
+    lastActivityTime = Date.now();
+    
+    // Start idle check - reconnect if no activity for 10 minutes
+    if (idleCheckInterval) clearInterval(idleCheckInterval);
+    idleCheckInterval = setInterval(() => {
+      const idleTime = Date.now() - lastActivityTime;
+      if (idleTime > 10 * 60 * 1000) { // 10 minutes
+        console.log('⚠ No activity for 10 minutes, reconnecting...');
+        ws.close();
       }
-    }, 20000);
+    }, 60000); // Check every minute
   });
 
   ws.on('message', async (data) => {
+    lastActivityTime = Date.now();
     const message = JSON.parse(data.toString());
     await handleRequest(message);
   });
 
   ws.on('close', () => {
     console.log('✗ Connection closed, reconnecting immediately...');
-    clearInterval(pingInterval);
-    // Reconnect immediately, not after 5 seconds
+    if (idleCheckInterval) clearInterval(idleCheckInterval);
     reconnectTimeout = setTimeout(connect, 100);
   });
 
