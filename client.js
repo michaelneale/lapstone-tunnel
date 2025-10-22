@@ -45,6 +45,11 @@ function connect() {
     // Build and display the public URL (without trailing slash)
     const publicUrl = config.workerUrl.replace(/\/$/, '') + `/tunnel/${config.agentId}`;
     console.log(`✓ Public URL: ${publicUrl}`);
+    
+    // Enable TCP keepalive to detect dead connections faster
+    const socket = ws._socket;
+    socket.setKeepAlive(true, 30000); // Send keepalive probe every 30s of idle
+    // TCP keepalive handles detection - no need for socket.setTimeout()
   });
 
   ws.on('message', async (data) => {
