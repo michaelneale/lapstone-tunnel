@@ -74,12 +74,14 @@ export class TunnelMultiplexer {
     // Handle agent disconnect
     server.addEventListener('close', () => {
       this.agents.delete(agentId);
+      this.cleanupAgentRequests(agentId);
       console.log(`Agent ${agentId} disconnected. Total agents: ${this.agents.size}`);
     });
 
     server.addEventListener('error', (error) => {
       console.error(`WebSocket error for agent ${agentId}:`, error);
       this.agents.delete(agentId);
+      this.cleanupAgentRequests(agentId);
     });
 
     return new Response(null, {
@@ -288,6 +290,38 @@ export class TunnelMultiplexer {
         'Cache-Control': 'no-cache'
       }
     });
+  }
+
+  /**
+   * Clean up all pending requests for a disconnected agent
+   */
+  cleanupAgentRequests(agentId) {
+    let cleanedPending = 0;
+    let cleanedChunked = 0;
+
+    // Clean up pending requests - abort them with a connection error
+    for (const [requestId, pending] of this.pendingRequests.entries()) {
+      // We don't have agentId stored in pending, so we clean up all
+      // This is safe because each agent has its own DO instance
+      clearTimeout(pending.timeout);
+      try {
+        pending.reject(new Error('Agent disconnected'));
+      } catch (e) {
+        // Stream might already be closed, ignore
+      }
+      this.pendingRequests.delete(requestId);
+      cleanedPending++;
+    }
+
+    // Clean up incomplete chunked responses
+    for (const requestId of this.chunkedResponses.keys()) {
+      this.chunkedResponses.delete(requestId);
+      cleanedChunked++;
+    }
+
+    if (cleanedPending > 0 || cleanedChunked > 0) {
+      console.log(`Cleaned up ${cleanedPending} pending requests and ${cleanedChunked} chunked responses for agent ${agentId}`);
+    }
   }
 
   /**

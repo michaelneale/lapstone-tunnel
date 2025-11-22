@@ -31,7 +31,7 @@ Anyone can use it. No signup. No tokens. Just pick a random ID and connect.
 **1. Get the client:**
 ```bash
 git clone <this-repo>
-cd cloudflare-tunnel-goosed
+cd lapstone-tunnel
 npm install
 ```
 
@@ -131,11 +131,11 @@ Now use your own URL instead of the public service. Takes ~30 seconds to deploy!
 
 ## Files
 
-- `client.js` - Node.js client (~160 lines)
+- `client.js` - Node.js client (~222 lines)
 - `src/index.js` - Worker entry point (~110 lines)
-- `src/multiplexer.js` - Durable Object (~280 lines)
+- `src/multiplexer.js` - Durable Object (~340 lines)
 
-Total: ~550 lines of code.
+Total: ~672 lines of code.
 
 ## Scalability
 
